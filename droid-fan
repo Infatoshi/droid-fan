@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""
+Spin any image as rotating ASCII art in your terminal.
+Uses the same character set as the Droid startup animation.
+
+Usage: droid-fan [options] [image] [speed_rpm]
+  image       path to image (default: Droid logo)
+  speed_rpm   rotation speed in RPM (default: 30)
+  -s SCALE    fraction of terminal to fill, 0.0-1.0 (default: 1.0)
+  --invert    invert brightness
+
+Press any key to exit.
+"""
+
+import argparse
+import math
+import os
+import shutil
+import sys
+import time
+import threading
+
+from PIL import Image, ImageDraw, ImageOps
+
+CHAR_ASPECT = 0.5
+ASCII_RAMP = " *#\u2590"
+
+WHITE = "\033[37m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
+CLEAR = "\033[2J\033[H"
+HIDE_CURSOR = "\033[?25l"
+SHOW_CURSOR = "\033[?25h"
+
+
+def make_propeller(size=512, blades=3):
+    """Generate a fallback propeller image."""
+    img = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(img)
+    cx, cy = size // 2, size // 2
+    blade_len = size * 0.42
+    hub_r = size * 0.06
+
+    for b in range(blades):
+        angle = b * (2 * math.pi / blades)
+        tip_x = cx + blade_len * math.cos(angle)
+        tip_y = cy + blade_len * math.sin(angle)
+        perp = angle + math.pi / 2
+        base_w, tip_w = size * 0.07, size * 0.02
+        points = [
+            (cx + base_w * math.cos(perp) + hub_r * math.cos(angle),
+             cy + base_w * math.sin(perp) + hub_r * math.sin(angle)),
+            (tip_x + tip_w * math.cos(perp), tip_y + tip_w * math.sin(perp)),
+            (tip_x - tip_w * math.cos(perp), tip_y - tip_w * math.sin(perp)),
+            (cx - base_w * math.cos(perp) + hub_r * math.cos(angle),
+             cy - base_w * math.sin(perp) + hub_r * math.sin(angle)),
+        ]
+        draw.polygon(points, fill=220)
+
+    draw.ellipse([cx - hub_r, cy - hub_r, cx + hub_r, cy + hub_r], fill=255)
+
+    for b in range(blades):
+        angle = b * (2 * math.pi / blades)
+        inner_len = blade_len * 0.6
+        tip_x = cx + inner_len * math.cos(angle)
+        tip_y = cy + inner_len * math.sin(angle)
+        perp = angle + math.pi / 2
+        base_w, tip_w = size * 0.04, size * 0.01
+        offset = angle + 0.05
+        points = [
+            (cx + base_w * math.cos(perp) + hub_r * math.cos(offset),
+             cy + base_w * math.sin(perp) + hub_r * math.sin(offset)),
+            (tip_x + tip_w * math.cos(perp), tip_y + tip_w * math.sin(perp)),
+            (tip_x - tip_w * math.cos(perp), tip_y - tip_w * math.sin(perp)),
+            (cx - base_w * math.cos(perp) + hub_r * math.cos(offset),
+             cy - base_w * math.sin(perp) + hub_r * math.sin(offset)),
+        ]
+        draw.polygon(points, fill=180)
+
+    return img
+
+
+def load_image(path, invert=False):
+    """Load and preprocess an image for ASCII rendering."""
+    img = Image.open(path)
+
+    if img.mode in ("P", "PA", "LA"):
+        img = img.convert("RGBA")
+    if img.mode == "RGBA":
+        r, g, b, a = img.split()
+        black = Image.new("RGB", img.size, (0, 0, 0))
+        black.paste(img, mask=a)
+        img = black.convert("L")
+    else:
+        img = img.convert("L")
+
+    if invert:
+        img = ImageOps.invert(img)
+
+    img = ImageOps.autocontrast(img, cutoff=0)
+
+    # Square with black padding
+    size = max(img.size)
+    square = Image.new("L", (size, size), 0)
+    offset = ((size - img.width) // 2, (size - img.height) // 2)
+    square.paste(img, offset)
+    return square
+
+
+def image_to_ascii(img, cols, rows):
+    """Convert image to ASCII using Droid's original character set."""
+    src_h = int(rows / CHAR_ASPECT)
+    resized = img.resize((cols, src_h), Image.LANCZOS)
+    pixels = resized.load()
+
+    strip_h = src_h / rows
+    ramp_len = len(ASCII_RAMP) - 1
+    result = []
+    for out_y in range(rows):
+        y0 = int(out_y * strip_h)
+        y1 = int((out_y + 1) * strip_h)
+        row = []
+        for x in range(cols):
+            total, count = 0, 0
+            for sy in range(y0, min(y1, src_h)):
+                val = pixels[x, sy]
+                if isinstance(val, tuple):
+                    val = int(0.299 * val[0] + 0.587 * val[1] + 0.114 * val[2])
+                total += val
+                count += 1
+            avg = total / count if count else 0
+            idx = int((avg / 255) * ramp_len)
+            row.append(ASCII_RAMP[max(0, min(idx, ramp_len))])
+        result.append("".join(row))
+    return result
+
+
+def render(frame):
+    """Render an ASCII frame centered in the terminal."""
+    cols, term_rows = shutil.get_terminal_size()
+    frame_rows = len(frame)
+    frame_cols = max(len(r) for r in frame) if frame else 0
+    pad_top = max(0, (term_rows - frame_rows) // 2)
+    pad_left = max(0, (cols - frame_cols) // 2)
+    sys.stdout.write(CLEAR)
+    for _ in range(pad_top):
+        sys.stdout.write("\n")
+    for row in frame:
+        sys.stdout.write(" " * pad_left + f"{BOLD}{WHITE}{row}{RESET}\n")
+    sys.stdout.flush()
+
+
+def wait_for_key(stop_event):
+    """Block until any key is pressed."""
+    import tty
+    import termios
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        while not stop_event.is_set():
+            if sys.stdin.read(1):
+                stop_event.set()
+                return
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Spin any image as rotating ASCII art in your terminal"
+    )
+    parser.add_argument("image", nargs="?", default=None,
+                        help="path to image (default: Droid logo)")
+    parser.add_argument("rpm", nargs="?", type=float, default=30,
+                        help="rotation speed in RPM (default: 30)")
+    parser.add_argument("-s", "--scale", type=float, default=1.0,
+                        help="fraction of terminal to fill, 0.01-1.0 (default: 1.0)")
+    parser.add_argument("--invert", action="store_true",
+                        help="invert brightness (auto-enabled for default logo)")
+    args = parser.parse_args()
+
+    term_cols, term_rows = shutil.get_terminal_size()
+    s = max(0.01, min(args.scale, 1.0))
+    out_cols = int(term_cols * s)
+    out_rows = int((term_rows - 1) * s)
+
+    default_logo = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "share", "droid-fan-logo.jpg"
+    )
+    invert = args.invert
+    image_path = args.image
+    if not image_path:
+        image_path = default_logo
+        invert = True
+
+    if image_path and os.path.exists(image_path):
+        img = load_image(image_path, invert)
+    else:
+        print(f"Image not found: {image_path}", file=sys.stderr)
+        print("Falling back to generated propeller.", file=sys.stderr)
+        img = make_propeller()
+
+    # Pre-render one full rotation
+    n_frames = 36
+    frames = []
+    for i in range(n_frames):
+        angle = (i / n_frames) * 360
+        rotated = img.rotate(angle, resample=Image.BICUBIC, expand=False)
+        frames.append(image_to_ascii(rotated, out_cols, out_rows))
+
+    frame_delay = (60.0 / args.rpm) / n_frames
+
+    stop = threading.Event()
+    threading.Thread(target=wait_for_key, args=(stop,), daemon=True).start()
+
+    sys.stdout.write(HIDE_CURSOR)
+    try:
+        idx = 0
+        while not stop.is_set():
+            render(frames[idx % len(frames)])
+            idx += 1
+            time.sleep(frame_delay)
+    finally:
+        sys.stdout.write(SHOW_CURSOR)
+        sys.stdout.write(CLEAR)
+        sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    main()
