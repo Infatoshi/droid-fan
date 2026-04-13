@@ -29,11 +29,15 @@ python3 -m venv .venv
 
 # Create wrapper script that uses the venv python
 mkdir -p "$BIN_DIR"
-cat > "$BIN_DIR/droid-fan" << WRAPPER
+ln -sf "$INSTALL_DIR/bin/droid-fan" "$BIN_DIR/droid-fan"
+
+# Create the wrapper in the install dir
+mkdir -p "$INSTALL_DIR/bin"
+cat > "$INSTALL_DIR/bin/droid-fan" << WRAPPER
 #!/bin/bash
 exec $INSTALL_DIR/.venv/bin/python3 $INSTALL_DIR/droid-fan "\$@"
 WRAPPER
-chmod +x "$BIN_DIR/droid-fan"
+chmod +x "$INSTALL_DIR/bin/droid-fan"
 
 echo ""
 echo "Installed to $BIN_DIR/droid-fan"
