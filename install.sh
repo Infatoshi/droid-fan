@@ -14,6 +14,7 @@ command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required"; exit 
 if [ -d "$INSTALL_DIR/.git" ]; then
     echo "Updating existing installation..."
     cd "$INSTALL_DIR"
+    git checkout -- .
     git pull --ff-only
 else
     rm -rf "$INSTALL_DIR"
