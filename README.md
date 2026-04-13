@@ -7,22 +7,22 @@ Uses the same character set (`* # ▐`) as the Factory Droid startup animation.
 
 ## Install
 
+One line:
+
 ```bash
-git clone https://github.com/infatoshi/droid-fan.git
-cd droid-fan
+curl -fsSL https://raw.githubusercontent.com/infatoshi/droid-fan/main/install.sh | bash
+```
 
-# Create venv and install deps
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+Or manually:
 
-# Make executable
-chmod +x droid-fan
-
-# Symlink into your PATH
+```bash
+git clone https://github.com/infatoshi/droid-fan.git ~/.local/share/droid-fan
+cd ~/.local/share/droid-fan
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ln -s "$(pwd)/droid-fan" ~/.local/bin/droid-fan
 ```
 
-Requires Python 3.10+ with Pillow.
+Requires: git, python3 (3.10+). The install script creates an isolated venv at `~/.local/share/droid-fan/.venv` so it won't touch your system Python.
 
 ## Usage
 
