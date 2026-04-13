@@ -108,12 +108,34 @@ def load_image(path, invert=False):
 
 
 def image_to_ascii(img, cols, rows):
-    """Convert image to ASCII using Droid's original character set."""
-    src_h = int(rows / CHAR_ASPECT)
-    resized = img.resize((cols, src_h), Image.LANCZOS)
-    pixels = resized.load()
+    """Convert image to ASCII using Droid's original character set.
 
-    strip_h = src_h / rows
+    Maintains aspect ratio by fitting to the smaller visual dimension
+    and centering in the grid. Characters are ~2:1 tall:wide, so the
+    visual height of a row is 1/CHAR_ASPECT character-widths.
+    """
+    # Visual dimensions in "character-width" units
+    vis_w = cols
+    vis_h = rows / CHAR_ASPECT
+
+    # Resize image to fit within vis_w x vis_h maintaining aspect ratio
+    img_w, img_h = img.size
+    scale = min(vis_w / img_w, vis_h / img_h)
+    target_w = int(img_w * scale)
+    target_h = int(img_h * scale)
+    resized = img.resize((target_w, target_h), Image.LANCZOS)
+
+    # Center on a vis_w x vis_h canvas
+    canvas = Image.new("L", (int(vis_w), int(vis_h)), 0)
+    paste_x = (int(vis_w) - target_w) // 2
+    paste_h = (int(vis_h) - target_h) // 2
+    canvas.paste(resized, (paste_x, paste_h))
+
+    pixels = canvas.load()
+    canvas_w = canvas.width
+    canvas_h = canvas.height
+
+    strip_h = canvas_h / rows
     ramp_len = len(ASCII_RAMP) - 1
     result = []
     for out_y in range(rows):
@@ -121,8 +143,11 @@ def image_to_ascii(img, cols, rows):
         y1 = int((out_y + 1) * strip_h)
         row = []
         for x in range(cols):
+            if x >= canvas_w:
+                row.append(" ")
+                continue
             total, count = 0, 0
-            for sy in range(y0, min(y1, src_h)):
+            for sy in range(y0, min(y1, canvas_h)):
                 val = pixels[x, sy]
                 if isinstance(val, tuple):
                     val = int(0.299 * val[0] + 0.587 * val[1] + 0.114 * val[2])
